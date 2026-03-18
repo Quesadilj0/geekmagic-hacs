@@ -121,7 +121,7 @@ class GeekMagicDevice:
         """
         _LOGGER.debug("Getting storage info from %s", self.host)
         session = await self._get_session()
-        async with session.get(f"{self.base_url}/space.json") as response:
+        async with session.get(f"{self.base_url}/space.json", allow_redirects=False) as response:
             response.raise_for_status()
             # Device returns text/plain content type, so we need to accept any
             data = await response.json(content_type=None)
@@ -379,7 +379,7 @@ class GeekMagicDevice:
         # Try Pro-specific path first (/.sys/app.json)
         try:
             async with session.get(
-                f"{self.base_url}/.sys/app.json", timeout=aiohttp.ClientTimeout(total=5)
+                f"{self.base_url}/.sys/app.json", timeout=aiohttp.ClientTimeout(total=5), allow_redirects=False
             ) as response:
                 if response.status == 200:
                     self.model = MODEL_PRO
@@ -417,7 +417,7 @@ class CloneDevice(GeekMagicDevice):
         brightness = None
         try:
             async with session.get(
-                f"{self.base_url}/getclocktype",
+                f"{self.base_url}/getclocktype", allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 resp.raise_for_status()
@@ -513,7 +513,7 @@ class CloneDevice(GeekMagicDevice):
         session = await self._get_session()
         try:
             async with session.get(
-                f"{self.base_url}/getclocktype",
+                f"{self.base_url}/getclocktype", allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as response:
                 if response.status == 200:
