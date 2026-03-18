@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from .const import MODEL_PRO, MODEL_ULTRA, MODEL_UNKNOWN
+from .const import MODEL_PRO, MODEL_ULTRA, MODEL_UNKNOWN, MODEL_CLONE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -402,3 +402,128 @@ class GeekMagicDevice:
 
         _LOGGER.warning("Could not detect device model for %s", self.host)
         return MODEL_UNKNOWN
+
+
+class CloneDevice(GeekMagicDevice):
+    """HTTP client for SmallTV clone devices with chunked upload API."""
+
+    CHUNK_SIZE = 4096  # 4 KB chunks matching observed HAR
+
+    async def get_state(self) -> DeviceState:
+        """Get current device state from clone endpoints."""
+        _LOGGER.debug("Getting clone device state from %s", self.host)
+        session = await self._get_session()
+        theme = 0
+        brightness = None
+        try:
+            async with session.get(
+                f"{self.base_url}/getclocktype",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                resp.raise_for_status()
+                text = await resp.text()
+                theme = int(text.strip().strip('"'))
+        except Exception as err:
+            _LOGGER.debug("Could not get clock type from clone: %s", err)
+        try:
+            async with session.get(
+                f"{self.base_url}/get_brightness",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+                brightness = int(data.get("brightness", 0))
+        except Exception as err:
+            _LOGGER.debug("Could not get brightness from clone: %s", err)
+        return DeviceState(theme=theme, brightness=brightness, current_image=None)
+
+    async def get_space(self) -> SpaceInfo:
+        """Clone devices have no space endpoint; return zeros."""
+        return SpaceInfo(total=0, free=0)
+
+    async def set_brightness(self, value: int) -> None:
+        """Set brightness via clone JSON endpoint."""
+        value = max(0, min(100, value))
+        session = await self._get_session()
+        async with session.post(
+            f"{self.base_url}/led",
+            json={"brightness": value},
+        ) as response:
+            response.raise_for_status()
+        _LOGGER.debug("Clone: set brightness to %d", value)
+
+    async def upload(self, image_data: bytes, filename: str) -> None:
+        """Upload image to clone using 3-step chunked protocol.
+
+        Observed from HAR:
+          1. POST /start_upload  {file_number, file_size, total_chunks}
+          2. POST /upload_chunk  multipart: chunk + file_number + chunk_index + total_chunks
+          3. POST /finish_upload {file_number, file_name}
+        """
+        session = await self._get_session()
+        file_size = len(image_data)
+        chunk_size = self.CHUNK_SIZE
+        chunks = [
+            image_data[i : i + chunk_size]
+            for i in range(0, file_size, chunk_size)
+        ]
+        total_chunks = len(chunks)
+        file_number = 1
+        _LOGGER.debug(
+            "Clone upload: %s (%d bytes, %d chunks)",
+            filename, file_size, total_chunks,
+        )
+        # Step 1: start
+        async with session.post(
+            f"{self.base_url}/start_upload",
+            json={
+                "file_number": file_number,
+                "file_size": file_size,
+                "total_chunks": total_chunks,
+            },
+        ) as resp:
+            resp.raise_for_status()
+        # Step 2: chunks
+        for idx, chunk in enumerate(chunks):
+            form = aiohttp.FormData()
+            form.add_field(
+                "chunk",
+                chunk,
+                content_type="application/octet-stream",
+            )
+            form.add_field("file_number", str(file_number))
+            form.add_field("chunk_index", str(idx))
+            form.add_field("total_chunks", str(total_chunks))
+            async with session.post(
+                f"{self.base_url}/upload_chunk",
+                data=form,
+            ) as resp:
+                resp.raise_for_status()
+            _LOGGER.debug("Clone upload: chunk %d/%d sent", idx + 1, total_chunks)
+        # Step 3: finish
+        async with session.post(
+            f"{self.base_url}/finish_upload",
+            json={"file_number": file_number, "file_name": filename},
+        ) as resp:
+            resp.raise_for_status()
+        _LOGGER.debug("Clone upload complete: %s", filename)
+
+    async def detect_model(self) -> str:
+        """Detect clone by probing /getclocktype which genuine devices lack."""
+        session = await self._get_session()
+        try:
+            async with session.get(
+                f"{self.base_url}/getclocktype",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as response:
+                if response.status == 200:
+                    text = await response.text()
+                    # Genuine devices return JSON; clone returns a bare number or quoted string
+                    if text.strip().strip('"').isdigit():
+                        self.model = MODEL_CLONE
+                        _LOGGER.info("Detected device model: SmallTV Clone")
+                        return self.model
+        except Exception as err:
+            _LOGGER.debug("Clone probe /getclocktype failed: %s", err)
+        # Fall back to base class detection for genuine devices
+        return await super().detect_model()
