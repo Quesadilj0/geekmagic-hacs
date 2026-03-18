@@ -14,7 +14,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
 from .coordinator import GeekMagicCoordinator
-from .device import GeekMagicDevice
+from .device import GeekMagicDevice, CloneDevice
+from .const import DOMAIN, MODEL_CLONE
 from .panel import async_register_panel
 from .store import GeekMagicStore
 from .websocket import async_register_websocket_commands
@@ -110,7 +111,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Setting up GeekMagic integration for %s", host)
 
     session = async_get_clientsession(hass)
-    device = GeekMagicDevice(host, session=session)
+    # Detect model: probe clone endpoints first, fall back to genuine GeekMagic     _probe = CloneDevice(host, session=session)     detected = await _probe.detect_model()     if detected == MODEL_CLONE:         device = _probe     else:         device = GeekMagicDevice(host, session=session, model=detected)
 
     # Test connection - raise ConfigEntryNotReady if device is offline
     # This allows HA to automatically retry instead of showing a "Setup Error"
@@ -123,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Successfully connected to GeekMagic device at %s", host)
 
     # Detect device model (Pro vs Ultra)
-    await device.detect_model()
+    
 
     # Create coordinator
     coordinator = GeekMagicCoordinator(
