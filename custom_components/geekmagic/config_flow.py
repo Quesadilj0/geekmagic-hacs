@@ -77,7 +77,7 @@ class GeekMagicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     options=self._get_default_options(),
                 )
             _LOGGER.warning("Config flow: failed to connect to %s: %s", host, result.message)
-            errors["base"] = result.error
+            errors["base"] = result.error if result.error != "none" else "unknown"
 
         return self.async_show_form(
             step_id="user",
