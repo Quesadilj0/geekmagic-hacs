@@ -6,6 +6,7 @@ DOMAIN = "geekmagic"
 MODEL_ULTRA = "ultra"
 MODEL_PRO = "pro"
 MODEL_UNKNOWN = "unknown"
+MODEL_CLONE = "clone"
 
 # Display dimensions
 DISPLAY_WIDTH = 240
